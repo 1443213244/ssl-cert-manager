@@ -40,6 +40,7 @@ trap cleanup EXIT
 log "Starting certificate check..."
 
 # 随机延迟 0-300秒（5分钟），避免大量服务器同时请求
+# 手动调试时可将下面三行注释掉
 RANDOM_DELAY=$((RANDOM % 300))
 log "Random delay: ${RANDOM_DELAY} seconds"
 sleep ${RANDOM_DELAY}
@@ -49,10 +50,11 @@ mkdir -p "${LOCAL_DIR}"
 
 # 获取远程版本
 log "Checking remote version..."
+# 修复：改用兼容性更强的 cut 方式解析 JSON，无视空格影响
 REMOTE_VERSION=$(curl -sf --connect-timeout 10 --max-time 30 \
     -H "X-Cert-Token: ${CERT_TOKEN}" \
     "${CERT_SERVER}/certs/${DOMAIN}/version.json" 2>/dev/null | \
-    grep -o '"version":"[^"]*"' | cut -d'"' -f4)
+    grep '"version"' | cut -d'"' -f4)
 
 if [ -z "${REMOTE_VERSION}" ]; then
     die "Failed to fetch remote version from ${CERT_SERVER}"
@@ -96,31 +98,29 @@ if ! openssl x509 -in "${TEMP_DIR}/fullchain.pem" -noout 2>/dev/null; then
     die "Downloaded certificate is invalid"
 fi
 
-# 验证私钥与证书匹配
-CERT_MD5=$(openssl x509 -in "${TEMP_DIR}/fullchain.pem" -noout -modulus 2>/dev/null | md5sum | cut -d' ' -f1)
-KEY_MD5=$(openssl rsa -in "${TEMP_DIR}/key.pem" -noout -modulus 2>/dev/null | md5sum | cut -d' ' -f1)
+# 验证私钥与证书匹配 (兼容 RSA/ECC)
+CERT_MD5=$(openssl x509 -in "${TEMP_DIR}/fullchain.pem" -pubkey -noout 2>/dev/null | md5sum | cut -d' ' -f1)
+KEY_MD5=$(openssl pkey -in "${TEMP_DIR}/key.pem" -pubout 2>/dev/null | md5sum | cut -d' ' -f1)
 if [ "${CERT_MD5}" != "${KEY_MD5}" ]; then
     die "Certificate and private key do not match"
 fi
 
 log "Certificate validated successfully"
 
-# 安装证书到 /root/general（GOST证书目录）
+# 安装证书到 /root/general
 cp "${TEMP_DIR}/fullchain.pem" "${LOCAL_DIR}/fullchain.pem"
 cp "${TEMP_DIR}/key.pem" "${LOCAL_DIR}/key.pem"
 cp "${TEMP_DIR}/cert.pem" "${LOCAL_DIR}/cert.pem"
 chmod 644 "${LOCAL_DIR}/fullchain.pem" "${LOCAL_DIR}/cert.pem"
-chmod 600 "${LOCAL_DIR}/key.pem"
+chmod 644 "${LOCAL_DIR}/key.pem"
 echo "${REMOTE_VERSION}" > "${VERSION_FILE}"
 
 log "Certificate installed to ${LOCAL_DIR}"
 
 # ============ 重载 GOST ============
-# GOST 使用全局证书配置，只需发送 SIGHUP 信号让其重新加载证书文件
 log "Reloading GOST..."
 
 if pgrep -x "gost" > /dev/null; then
-    # 发送 SIGHUP 信号重载配置和证书
     pkill -HUP gost
     if [ $? -eq 0 ]; then
         log "GOST reloaded successfully via SIGHUP"
@@ -128,7 +128,6 @@ if pgrep -x "gost" > /dev/null; then
         log "WARN: Failed to send SIGHUP to GOST"
     fi
 else
-    # GOST 未运行，可能由 systemd 管理
     if systemctl is-active --quiet gost 2>/dev/null; then
         systemctl reload gost 2>/dev/null || systemctl restart gost
         log "GOST reloaded via systemd"

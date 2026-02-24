@@ -44,9 +44,8 @@ cat > "${VERSION_FILE}" << EOF
 }
 EOF
 
-# 设置权限
+# 设置权限，允许Nginx读取以进行分发
 chmod 644 "${CERT_DIR}"/*.pem "${VERSION_FILE}" 2>/dev/null || true
-chmod 600 "${CERT_DIR}/privkey.pem" 2>/dev/null || true
 
 log "Version updated: ${VERSION}"
 log "Expires: ${EXPIRES}"

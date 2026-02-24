@@ -53,7 +53,7 @@ log "Checking remote version..."
 REMOTE_VERSION=$(curl -sf --connect-timeout 10 --max-time 30 \
     -H "X-Cert-Token: ${CERT_TOKEN}" \
     "${CERT_SERVER}/certs/${DOMAIN}/version.json" 2>/dev/null | \
-    grep -o '"version":"[^"]*"' | cut -d'"' -f4)
+    grep '"version"' | cut -d'"' -f4)
 
 if [ -z "${REMOTE_VERSION}" ]; then
     die "Failed to fetch remote version from ${CERT_SERVER}"
@@ -92,9 +92,9 @@ if ! openssl x509 -in "${TEMP_DIR}/fullchain.pem" -noout 2>/dev/null; then
     die "Downloaded certificate is invalid"
 fi
 
-# 验证私钥与证书匹配
-CERT_MD5=$(openssl x509 -in "${TEMP_DIR}/fullchain.pem" -noout -modulus 2>/dev/null | md5sum | cut -d' ' -f1)
-KEY_MD5=$(openssl rsa -in "${TEMP_DIR}/privkey.pem" -noout -modulus 2>/dev/null | md5sum | cut -d' ' -f1)
+# 验证私钥与证书匹配 (兼容 RSA/ECC)
+CERT_MD5=$(openssl x509 -in "${TEMP_DIR}/fullchain.pem" -pubkey -noout 2>/dev/null | md5sum | cut -d' ' -f1)
+KEY_MD5=$(openssl pkey -in "${TEMP_DIR}/privkey.pem" -pubout 2>/dev/null | md5sum | cut -d' ' -f1)
 if [ "${CERT_MD5}" != "${KEY_MD5}" ]; then
     die "Certificate and private key do not match"
 fi
@@ -105,7 +105,7 @@ log "Certificate validated successfully"
 cp "${TEMP_DIR}/fullchain.pem" "${LOCAL_DIR}/fullchain.pem"
 cp "${TEMP_DIR}/privkey.pem" "${LOCAL_DIR}/privkey.pem"
 chmod 644 "${LOCAL_DIR}/fullchain.pem"
-chmod 600 "${LOCAL_DIR}/privkey.pem"
+chmod 644 "${LOCAL_DIR}/privkey.pem"
 echo "${REMOTE_VERSION}" > "${VERSION_FILE}"
 
 log "Certificate installed to ${LOCAL_DIR}"
